@@ -1,4 +1,4 @@
-# Triton ROV — Stereo Measurement System
+# Triton ROV - Stereo Measurement System
 
 A browser-based underwater measurement tool for the Triton ROV, built around the OAK-D S2 stereo camera. Pilots freeze a live video feed and click two points on the image to measure real-world distances using stereo depth — no physical contact with the target required.
 
@@ -206,6 +206,6 @@ Accuracy degrades at long range due to the OAK-D S2's 7.5 cm stereo baseline. Un
 
 ## Team
 
-Triton ROVs — Software sub-team 
-Arab Academy for Science, Technology & Maritime Transport, Alexandria  
+Triton ROVs - Software sub-team                                      
+Arab Academy for Science, Technology & Maritime Transport, Alexandria                          
 MATE ROV Competition
