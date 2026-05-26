@@ -66,7 +66,6 @@ HTML_PAGE = """
         const MAG_ZOOM = 3, MAG_SIZE = 120, CAM_W = 640, CAM_H = 360;
         const COLORS = ['#ff4444','#44ff44','#44aaff','#ffff44','#ff44ff','#44ffdd','#ffaa44','#aa44ff'];
         
-        let clicks = [];
         let isFrozen = false;
         let measureMode = 'DIRECT';
         let scaleFactor = 1.0;
@@ -138,10 +137,19 @@ HTML_PAGE = """
             fetch('/toggle', { method: 'POST' }).then(res => res.json()).then(data => {
                 isFrozen = (data.state === 'FROZEN');
                 if(isFrozen) {
-                    freezeBtn.innerText = 'RESUME (SPACE)'; statusDiv.style.color = '#0ff';
-                    if (measureMode === 'DIRECT') statusDiv.innerText = 'System Frozen. Hover to magnify, click 2 points.';
-                    if (measureMode === 'REF_1') statusDiv.innerText = 'System Frozen. Click 2 points on KNOWN reference.';
-                    if (measureMode === 'REF_2') statusDiv.innerText = 'Scale Active. Click 2 points on UNKNOWN target.';
+                    freezeBtn.innerText = 'RESUME (SPACE)'; 
+                    
+                    let warnHTML = "";
+                    if (data.buf_len < 60) {
+                        statusDiv.style.color = '#ff0'; // Yellow warning
+                        warnHTML = ` [WARNING: Partial Buffer ${data.buf_len}/60]`;
+                    } else {
+                        statusDiv.style.color = '#0ff'; // Standard cyan
+                    }
+                    
+                    if (measureMode === 'DIRECT') statusDiv.innerText = `System Frozen${warnHTML}. Hover to magnify, click 2 points.`;
+                    if (measureMode === 'REF_1') statusDiv.innerText = `System Frozen${warnHTML}. Click 2 points on KNOWN reference.`;
+                    if (measureMode === 'REF_2') statusDiv.innerText = `Scale Active${warnHTML}. Click 2 points on UNKNOWN target.`;
                 } else {
                     freezeBtn.innerText = 'FREEZE (SPACE)'; statusDiv.innerText = 'Live Stream. Press SPACE to Freeze.';
                     statusDiv.style.color = '#aaa'; mag.style.display = 'none'; debugDiv.innerText = '';
@@ -155,7 +163,7 @@ HTML_PAGE = """
         document.addEventListener('keydown', (e) => { if(e.code === 'Space') { e.preventDefault(); toggleFreeze(); } });
 
         function clearPoints() {
-            clicks = []; pendingP1 = null; measurements = [];
+            pendingP1 = null; measurements = [];
             document.querySelectorAll('.target-dot').forEach(e => e.remove());
             resultDiv.innerHTML = "00.0 cm &plusmn; 0.0 cm"; debugDiv.innerText = '';
             redrawCanvas(); updateList();

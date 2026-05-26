@@ -72,6 +72,7 @@ class ROVWebHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if self.path == '/toggle':
+            buf_len = 0
             with state.state_lock:
                 if state.system_state == "LIVE":
                     state.system_state = "FROZEN"
@@ -79,7 +80,8 @@ class ROVWebHandler(BaseHTTPRequestHandler):
                     if state.latest_uncompressed_frame is not None:
                         state.frozen_uncompressed_frame = state.latest_uncompressed_frame.copy()
                     
-                    if len(state.depth_buffer) > 0:
+                    buf_len = len(state.depth_buffer)
+                    if buf_len > 0:
                         stack = np.array(state.depth_buffer)
                         low  = np.percentile(stack, 10, axis=0)
                         high = np.percentile(stack, 80, axis=0)
@@ -96,7 +98,11 @@ class ROVWebHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
             self.end_headers()
-            self.wfile.write(json.dumps({'state': state.system_state}).encode('utf-8'))
+            # Send the buffer length back so the UI can warn the pilot if it's partial
+            self.wfile.write(json.dumps({
+                'state': state.system_state,
+                'buf_len': buf_len
+            }).encode('utf-8'))
             
         elif self.path == '/measure':
             content_length = int(self.headers['Content-Length'])
@@ -168,4 +174,3 @@ class ROVWebHandler(BaseHTTPRequestHandler):
             self.send_header('Content-type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps(response_data).encode('utf-8'))
-

@@ -5,7 +5,10 @@ import numpy as np
 UNDERWATER_MODE = True  # True = Flashed EEPROM, False = Factory EEPROM
 PORT = 1111
 JPEG_QUALITY = 70  
-MOTION_THRESHOLD = 3.5  # TUNE THIS: Higher = less sensitive. Lower = more sensitive.
+
+# TUNE THIS: Increased to 6.0 to account for surface water light flicker. 
+# Lower it if the ROV is moving but the buffer isn't clearing.
+MOTION_THRESHOLD = 6.0  
 
 # --- GLOBAL MEMORY & STATE ---
 system_state = "LIVE"

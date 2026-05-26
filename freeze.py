@@ -122,31 +122,28 @@ def main():
                     else:
                         state.depth_buffer.clear()
 
-                with state.state_lock:
-                    client_count = state.active_clients
-
-                if client_count > 0:
-                    cv2.line(stream_frame, (310, 180), (330, 180), (0, 255, 0), 1)
-                    cv2.line(stream_frame, (320, 170), (320, 190), (0, 255, 0), 1)
-                    
-                    buf_len = len(state.depth_buffer)
-                    if not is_stable:
-                        hud_text = "MOVING - CLEARING BUF"
-                        hud_color = (0, 0, 255)
-                    elif buf_len < 60:
-                        hud_text = f"STABILIZING: {buf_len}/60"
-                        hud_color = (0, 255, 255)
-                    else:
-                        hud_text = "LOCKED: 60/60 (READY)"
-                        hud_color = (0, 255, 0)
-                    
-                    cv2.putText(stream_frame, f"FPS: {current_fps:.1f} | Mot: {motion_score:.1f}", 
-                                (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-                    cv2.putText(stream_frame, hud_text, 
-                                (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.5, hud_color, 1)
-                    
-                    _, buffer = cv2.imencode('.jpg', stream_frame, [cv2.IMWRITE_JPEG_QUALITY, state.JPEG_QUALITY])
-                    state.latest_jpeg = buffer.tobytes()
+                # Unconditionally draw HUD and encode to prevent stale frames on reconnect
+                cv2.line(stream_frame, (310, 180), (330, 180), (0, 255, 0), 1)
+                cv2.line(stream_frame, (320, 170), (320, 190), (0, 255, 0), 1)
+                
+                buf_len = len(state.depth_buffer)
+                if not is_stable:
+                    hud_text = "MOVING - CLEARING BUF"
+                    hud_color = (0, 0, 255)
+                elif buf_len < 60:
+                    hud_text = f"STABILIZING: {buf_len}/60"
+                    hud_color = (0, 255, 255)
+                else:
+                    hud_text = "LOCKED: 60/60 (READY)"
+                    hud_color = (0, 255, 0)
+                
+                cv2.putText(stream_frame, f"FPS: {current_fps:.1f} | Mot: {motion_score:.1f}", 
+                            (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                cv2.putText(stream_frame, hud_text, 
+                            (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.5, hud_color, 1)
+                
+                _, buffer = cv2.imencode('.jpg', stream_frame, [cv2.IMWRITE_JPEG_QUALITY, state.JPEG_QUALITY])
+                state.latest_jpeg = buffer.tobytes()
 
 if __name__ == "__main__":
     main()
