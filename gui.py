@@ -6,79 +6,86 @@ HTML_PAGE = """
     <style>
         body { background-color: #0a0a0a; color: #0f0; font-family: monospace; text-align: center; margin-top: 30px; }
         
-        #video-container { display: flex; justify-content: center; gap: 10px; }
+        #video-container { display: flex; justify-content: center; gap: 10px; position: relative; width: 1290px; margin: 0 auto; }
+        
         .stream-box { position: relative; width: 640px; height: 360px; border: 2px solid #0f0; box-shadow: 0px 0px 20px rgba(0,255,0,0.3); }
         
         #stream-rgb { cursor: crosshair; }
-        #measure-canvas { position: absolute; top: 0; left: 0; width: 640px; height: 360px; pointer-events: none; }
+        #measure-canvas { position: absolute; top: 0; left: 0; width: 640px; height: 360px; pointer-events: none; z-index: 3; }
         
-        /* Native DOM HUD Overlays */
         .hud-text { position: absolute; left: 10px; font-weight: bold; text-shadow: 1px 1px 2px #000; pointer-events: none; z-index: 5; }
         #hud-fps { top: 15px; color: #0f0; }
         #hud-status { top: 35px; color: #0f0; }
+        #hud-z { position: absolute; bottom: 15px; right: 15px; font-weight: bold; font-size: 16px; background: rgba(0,0,0,0.7); padding: 5px 10px; border: 1px solid #0ff; color: #0ff; pointer-events: none; z-index: 5; display: none; }
         
-        /* Absolute SVG Crosshair */
         #crosshair { position: absolute; top: 0; left: 0; width: 640px; height: 360px; pointer-events: none; z-index: 4; }
-        
         .target-dot { position: absolute; width: 8px; height: 8px; background: red; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; z-index: 10; box-shadow: 0 0 5px red; }
-        #panel { margin-top: 20px; padding: 15px; border: 1px solid #333; display: inline-block; background: #111; min-width: 550px; }
+        
+        #sync-line {
+            position: absolute; height: 1px; background: #0ff; box-shadow: 0 0 12px #0ff, 0 0 4px #0ff;
+            pointer-events: none; z-index: 15; display: none; transform-origin: left;
+        }
+        
+        #disp-v-line {
+            position: absolute; top: 0; height: 100%; width: 1px; background: rgba(0, 255, 255, 0.4);
+            box-shadow: 0 0 8px rgba(0, 255, 255, 0.8); pointer-events: none; z-index: 15; display: none;
+        }
+
+        #disp-target {
+            position: absolute; width: 16px; height: 16px; border: 2px solid #0ff; border-radius: 50%;
+            box-shadow: 0 0 10px #0ff, inset 0 0 5px #0ff; pointer-events: none; z-index: 16; display: none;
+            transform: translate(-50%, -50%); background: rgba(0, 255, 255, 0.1);
+        }
+        #disp-target::after {
+            content: ''; position: absolute; top: 50%; left: 50%; width: 2px; height: 2px;
+            background: #fff; border-radius: 50%; transform: translate(-50%, -50%); box-shadow: 0 0 5px #fff;
+        }
+
+        #panel { margin-top: 20px; padding: 15px; border: 1px solid #333; display: inline-block; background: #111; min-width: 650px; }
         .readout { font-size: 28px; color: #0ff; margin: 10px 0; font-weight: bold; }
         
-        /* Tactical Black Buttons */
-        .btn { 
-            background: #000; 
-            color: #0f0; 
-            border: 1px solid #0f0; 
-            padding: 10px 20px; 
-            cursor: pointer; 
-            font-weight: bold; 
-            font-family: monospace; 
-            margin: 5px; 
-            transition: background-color 0.2s; 
-        }
-        .btn:hover:not(:disabled) { 
-            background: #333; 
-        }
-        .btn:disabled {
-            color: #555;
-            border-color: #555;
-            cursor: not-allowed;
-        }
+        .btn { background: #000; color: #0f0; border: 1px solid #0f0; padding: 10px 20px; cursor: pointer; font-weight: bold; font-family: monospace; margin: 5px; transition: background-color 0.2s; }
+        .btn:hover:not(:disabled) { background: #333; }
+        .btn:disabled { color: #555; border-color: #555; cursor: not-allowed; }
         
-        /* Form Inputs */
-        input[type=number] { background: #000; color: #0f0; border: 1px solid #0f0; padding: 5px; font-family: monospace; width: 50px; text-align: center; }
+        input[type=number], input[type=range] { background: #000; color: #0f0; border: 1px solid #0f0; padding: 5px; font-family: monospace; text-align: center; }
+        input[type=range] { padding: 0; cursor: pointer; accent-color: #0f0; }
         
         #debug-info { margin-top: 8px; font-size: 11px; color: #555; }
         #measure-list { margin-top: 10px; font-size: 13px; text-align: left; min-height: 20px; padding: 0 5px; }
         
-        #magnifier {
-            position: absolute; border: 2px solid #0ff; border-radius: 50%;
-            box-shadow: 0 0 15px #0ff; pointer-events: none; display: none;
-            z-index: 20; background-color: #000;
-        }
+        #magnifier { position: absolute; border: 2px solid #0ff; border-radius: 50%; box-shadow: 0 0 15px #0ff; pointer-events: none; display: none; z-index: 20; background-color: #000; }
     </style>
 </head>
 <body>
     <h2>TRITON ROV // TACTICAL WEB HUD</h2>
     
     <div id="video-container">
+        <div id="sync-line"></div>
+        
         <div class="stream-box" id="rgb-wrapper">
             <img id="stream-rgb" width="640" height="360" draggable="false" />
             
             <div id="hud-fps" class="hud-text">FPS: 0.0 | Mot: 0.0</div>
             <div id="hud-status" class="hud-text">CONNECTING...</div>
+            <div id="hud-z">Z: --- mm</div>
             
             <svg id="crosshair">
                 <line x1="310" y1="180" x2="330" y2="180" stroke="#0f0" stroke-width="1"/>
                 <line x1="320" y1="170" x2="320" y2="190" stroke="#0f0" stroke-width="1"/>
             </svg>
-            
             <canvas id="measure-canvas" width="640" height="360"></canvas>
             <canvas id="magnifier" width="120" height="120"></canvas>
         </div>
         
-        <div class="stream-box">
+        <div class="stream-box" id="disp-wrapper">
             <img id="stream-disp" width="640" height="360" draggable="false" />
+            <div id="disp-v-line"></div>
+            <div id="disp-target"></div>
+            
+            <div style="position: absolute; bottom: 5px; left: 10px; font-size: 12px; font-weight: bold; color:#0f0; text-shadow: 1px 1px 2px #000;">
+                LIVE DISPARITY / FROZEN HEATMAP
+            </div>
         </div>
     </div>
     
@@ -93,15 +100,21 @@ HTML_PAGE = """
         <button id="capture-btn" class="btn" onclick="takeSnapshot()">SAVE TO PC</button>
         <div id="debug-info"></div>
 
-        <div style="margin-top: 15px; border-top: 1px solid #333; padding-top: 15px; display: flex; gap: 20px; text-align: left;">
+        <div style="margin-top: 15px; border-top: 1px solid #333; padding-top: 15px; display: flex; gap: 40px; text-align: left;">
             <div style="flex: 1;">
-                <label style="font-weight:bold; color:#0f0;">STABILITY BUFFER: <span id="buf-val">30</span> F</label>
-                <input type="range" id="buf-slider" min="10" max="60" value="30" style="width: 100%; margin-top: 10px; cursor: pointer; accent-color: #0f0;">
+                <label style="font-weight:bold; color:#0f0;">STABILITY BUFFER: <span id="buf-val">30</span></label>
+                <input type="range" id="buf-slider" min="10" max="60" value="30" style="width: 100%; margin-top: 5px; margin-bottom: 15px;">
+                
+                <label style="font-weight:bold; color:#0f0;">REFRACTION MULTIPLIER (K): <span id="k-val">1.00</span></label>
+                <input type="range" id="k-slider" min="0.5" max="2.0" step="0.01" value="1.00" style="width: 100%; margin-top: 5px;">
             </div>
             <div style="flex: 1;">
-                <label style="font-weight:bold; color:#0f0;">TARGET FPS: </label>
-                <input type="number" id="fps-input" value="30" min="10" max="60" style="width: 100%; margin-top: 5px;">
-                <small style="color: #666;">(Press Enter to apply)</small>
+                <label style="font-weight:bold; color:#0f0;">TARGET HARDWARE FPS: </label>
+                <input type="number" id="fps-input" value="30" min="10" max="60" style="width: 60px; margin-left: 10px;">
+                <div style="font-size: 10px; color: #555; margin-bottom: 15px; margin-top: 2px;">Press 'Enter' to reboot camera nodes</div>
+                
+                <label style="font-weight:bold; color:#0f0;">VARIANCE STRICTNESS (σ): <span id="sig-val">2.0</span></label>
+                <input type="range" id="sig-slider" min="0.5" max="5.0" step="0.1" value="2.0" style="width: 100%; margin-top: 5px;">
             </div>
         </div>
     </div>
@@ -117,16 +130,21 @@ HTML_PAGE = """
         const modeBtn = document.getElementById('mode-btn');
         const debugDiv = document.getElementById('debug-info');
         const listDiv = document.getElementById('measure-list');
-        
         const hudFps = document.getElementById('hud-fps');
         const hudStatus = document.getElementById('hud-status');
-        
-        const bufSlider = document.getElementById('buf-slider');
-        const bufVal = document.getElementById('buf-val');
-        const fpsInput = document.getElementById('fps-input');
-        
+        const hudZ = document.getElementById('hud-z');
         const mag = document.getElementById('magnifier');
         const mctx = mag.getContext('2d');
+        
+        const syncLine = document.getElementById('sync-line');
+        const dispVLine = document.getElementById('disp-v-line');
+        const dispTarget = document.getElementById('disp-target');
+        
+        const bufSlider = document.getElementById('buf-slider');
+        const kSlider = document.getElementById('k-slider');
+        const sigSlider = document.getElementById('sig-slider');
+        const fpsInput = document.getElementById('fps-input');
+        
         const MAG_ZOOM = 3, MAG_SIZE = 120, CAM_W = 640, CAM_H = 360;
         const COLORS = ['#ff4444','#44ff44','#44aaff','#ffff44','#ff44ff','#44ffdd','#ffaa44','#aa44ff'];
         
@@ -136,16 +154,20 @@ HTML_PAGE = """
         let pendingP1 = null;
         let measurements = [];
         
-        // Settings Handlers
-        bufSlider.addEventListener('input', (e) => bufVal.innerText = e.target.value);
-        bufSlider.addEventListener('change', sendSettings);
-        fpsInput.addEventListener('keydown', (e) => { if(e.key === 'Enter') sendSettings(); });
-
+        bufSlider.addEventListener('input', (e) => document.getElementById('buf-val').innerText = e.target.value);
+        kSlider.addEventListener('input', (e) => document.getElementById('k-val').innerText = e.target.value);
+        sigSlider.addEventListener('input', (e) => document.getElementById('sig-val').innerText = e.target.value);
+        
         function sendSettings() {
             fetch('/settings', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ size: parseInt(bufSlider.value), fps: parseInt(fpsInput.value) })
+                body: JSON.stringify({ 
+                    size: parseInt(bufSlider.value), 
+                    fps: parseInt(fpsInput.value),
+                    k: parseFloat(kSlider.value),
+                    sigma: parseFloat(sigSlider.value)
+                })
             }).then(res => res.json()).then(data => {
                 if (data.rebooting) {
                     hudStatus.innerText = "🔄 REBOOTING CAMERAS FOR NEW FPS...";
@@ -154,43 +176,39 @@ HTML_PAGE = """
             }).catch(err => console.error("Settings error:", err));
         }
 
+        bufSlider.addEventListener('change', sendSettings);
+        kSlider.addEventListener('change', sendSettings);
+        sigSlider.addEventListener('change', sendSettings);
+        fpsInput.addEventListener('keydown', (e) => { if(e.key === 'Enter') sendSettings(); });
+
         function fetchState() {
             if (isFrozen) return; 
-            
-            fetch('/state')
-                .then(res => res.json())
-                .then(data => {
-                    if (data.disconnected) {
-                        hudStatus.innerText = "⚠ OAK-D DISCONNECTED - WAITING FOR CAMERA";
-                        hudStatus.style.color = "#ff0000";
-                        hudFps.innerText = "FPS: 0.0 | Mot: 0.0";
-                        requestAnimationFrame(fetchState);
-                        return;
-                    }
-
-                    if(data.rgb) streamRgb.src = "data:image/jpeg;base64," + data.rgb;
-                    if(data.disp) streamDisp.src = "data:image/jpeg;base64," + data.disp;
-                    
-                    hudFps.innerText = `FPS: ${data.fps.toFixed(1)} | Mot: ${data.motion.toFixed(1)}`;
-                    
-                    if (!data.stable) {
-                        hudStatus.innerText = "MOVING - CLEARING BUF";
-                        hudStatus.style.color = "#ff0000";
-                    } else if (data.buf_len < data.max_buf) {
-                        hudStatus.innerText = `STABILIZING: ${data.buf_len}/${data.max_buf}`;
-                        hudStatus.style.color = "#ffff00";
-                    } else {
-                        hudStatus.innerText = `LOCKED: ${data.max_buf}/${data.max_buf} (READY)`;
-                        hudStatus.style.color = "#00ff00";
-                    }
-                    
+            fetch('/state').then(res => res.json()).then(data => {
+                if (data.disconnected) {
+                    hudStatus.innerText = "⚠ OAK-D DISCONNECTED";
+                    hudStatus.style.color = "#ff0000";
+                    hudFps.innerText = "FPS: 0.0 | Mot: 0.0";
                     requestAnimationFrame(fetchState);
-                }).catch(err => {
-                    console.error("Stream sync lost:", err);
-                    setTimeout(fetchState, 500);
-                });
+                    return;
+                }
+                if(data.rgb) streamRgb.src = "data:image/jpeg;base64," + data.rgb;
+                if(data.disp) streamDisp.src = "data:image/jpeg;base64," + data.disp;
+                
+                hudFps.innerText = `FPS: ${data.fps.toFixed(1)} | Mot: ${data.motion.toFixed(1)}`;
+                
+                if (!data.stable) {
+                    hudStatus.innerText = "MOVING - CLEARING BUF";
+                    hudStatus.style.color = "#ff0000";
+                } else if (data.buf_len < data.max_buf) {
+                    hudStatus.innerText = `STABILIZING: ${data.buf_len}/${data.max_buf}`;
+                    hudStatus.style.color = "#ffff00";
+                } else {
+                    hudStatus.innerText = `LOCKED: ${data.max_buf}/${data.max_buf} (READY)`;
+                    hudStatus.style.color = "#00ff00";
+                }
+                requestAnimationFrame(fetchState);
+            }).catch(err => { setTimeout(fetchState, 500); });
         }
-        
         fetchState();
         
         function colorForIndex(i) { return COLORS[i % COLORS.length]; }
@@ -253,19 +271,36 @@ HTML_PAGE = """
         function toggleFreeze() {
             fetch('/toggle', { method: 'POST' }).then(res => res.json()).then(data => {
                 isFrozen = (data.state === 'FROZEN');
-                bufSlider.disabled = isFrozen;
-                fpsInput.disabled = isFrozen;
+                
+                [bufSlider, kSlider, sigSlider, fpsInput].forEach(el => el.disabled = isFrozen);
 
                 if(isFrozen) {
                     freezeBtn.innerText = 'RESUME (SPACE)'; 
-                    let warnHTML = data.buf_len < data.max_buf ? ` [WARNING: Partial Buffer ${data.buf_len}/${data.max_buf}]` : "";
+                    hudZ.style.display = 'block';
                     
+                    // --- NEW: IMAGES LOAD DIRECTLY FROM TOGGLE PAYLOAD ---
+                    if (data.rgb) streamRgb.src = "data:image/jpeg;base64," + data.rgb;
+                    if (data.disp) streamDisp.src = "data:image/jpeg;base64," + data.disp;
+                    
+                    fetch('/raw_depth').then(r => r.arrayBuffer()).then(buffer => {
+                        window.depthData = new Uint16Array(buffer);
+                    });
+                    
+                    // --- NEW: BUFFER WARNING NOW WORKS ---
+                    let warnHTML = data.buf_len < data.max_buf ? ` [WARNING: Partial Buffer ${data.buf_len}/${data.max_buf}]` : "";
                     if (measureMode === 'DIRECT') statusDiv.innerText = `System Frozen${warnHTML}. Hover to magnify, click 2 points.`;
                     if (measureMode === 'REF_1') statusDiv.innerText = `System Frozen${warnHTML}. Click 2 points on KNOWN reference.`;
                     if (measureMode === 'REF_2') statusDiv.innerText = `Scale Active${warnHTML}. Click 2 points on UNKNOWN target.`;
                 } else {
-                    freezeBtn.innerText = 'FREEZE (SPACE)'; statusDiv.innerText = 'Live Stream. Press SPACE to Freeze.';
-                    mag.style.display = 'none'; debugDiv.innerText = '';
+                    freezeBtn.innerText = 'FREEZE (SPACE)'; 
+                    statusDiv.innerText = 'Live Stream. Press SPACE to Freeze.';
+                    hudZ.style.display = 'none';
+                    mag.style.display = 'none'; 
+                    syncLine.style.display = 'none';
+                    dispVLine.style.display = 'none';
+                    dispTarget.style.display = 'none';
+                    debugDiv.innerText = '';
+                    window.depthData = null;
                     clearPoints();
                     fetchState(); 
                 }
@@ -273,8 +308,7 @@ HTML_PAGE = """
         }
         
         function takeSnapshot() { window.open('/snapshot', '_blank'); }
-
-        document.addEventListener('keydown', (e) => { if(e.code === 'Space') { e.preventDefault(); toggleFreeze(); } });
+        document.addEventListener('keydown', (e) => { if(e.code === 'Space' && e.target !== fpsInput) { e.preventDefault(); toggleFreeze(); } });
 
         function clearPoints() {
             pendingP1 = null; measurements = [];
@@ -293,8 +327,26 @@ HTML_PAGE = """
             const rect = streamRgb.getBoundingClientRect();
             const mouseX = e.clientX - rect.left; const mouseY = e.clientY - rect.top;
             
+            syncLine.style.display = 'block';
+            syncLine.style.left = mouseX + 'px';
+            syncLine.style.top = mouseY + 'px';
+            syncLine.style.width = (1290 - mouseX) + 'px';
+            
+            dispVLine.style.display = 'block';
+            dispVLine.style.left = mouseX + 'px';
+            dispTarget.style.display = 'block';
+            dispTarget.style.left = mouseX + 'px';
+            dispTarget.style.top = mouseY + 'px';
+
             mag.style.display = 'block'; mag.style.left = (mouseX + 15) + 'px'; mag.style.top = (mouseY - MAG_SIZE - 15) + 'px';
             const camX = mouseX * (CAM_W / rect.width); const camY = mouseY * (CAM_H / rect.height);
+            const cx_round = Math.round(camX); const cy_round = Math.round(camY);
+            
+            if (window.depthData) {
+                let z_mm = window.depthData[cy_round * CAM_W + cx_round];
+                if (z_mm > 0) hudZ.innerText = `Z: ${(z_mm / 10).toFixed(1)} cm`;
+                else hudZ.innerText = `Z: ---`;
+            }
             
             mctx.clearRect(0, 0, MAG_SIZE, MAG_SIZE);
             mctx.drawImage(streamRgb, camX - (MAG_SIZE / 2 / MAG_ZOOM), camY - (MAG_SIZE / 2 / MAG_ZOOM), MAG_SIZE / MAG_ZOOM, MAG_SIZE / MAG_ZOOM, 0, 0, MAG_SIZE, MAG_SIZE);
@@ -304,7 +356,12 @@ HTML_PAGE = """
             mctx.fillStyle = 'red'; mctx.beginPath(); mctx.arc(MAG_SIZE/2, MAG_SIZE/2, 2, 0, 2 * Math.PI); mctx.fill();
         });
 
-        streamRgb.addEventListener('mouseleave', () => { mag.style.display = 'none'; });
+        streamRgb.addEventListener('mouseleave', () => { 
+            mag.style.display = 'none'; 
+            syncLine.style.display = 'none';
+            dispVLine.style.display = 'none';
+            dispTarget.style.display = 'none';
+        });
 
         streamRgb.addEventListener('mousedown', function(e) {
             if(!isFrozen) { alert("Please freeze the feed (Spacebar) before measuring."); return; }
@@ -335,9 +392,9 @@ HTML_PAGE = """
                     const label = `${data.dist_cm.toFixed(1)} cm`;
                     measurements.push({ p1, p2, label, warning: !!data.warning });
                     redrawCanvas(); updateList();
-                    statusDiv.innerText = `#${measurements.length}: ${label} — click for next measurement.`;
+                    statusDiv.innerText = `#${measurements.length}: ${label} (Conf: ${data.confidence}) — click for next.`;
                     resultDiv.innerHTML = data.result + warnHTML;
-                    if (data.avg_cam_dist_m !== undefined) debugDiv.innerText = 'Z_avg=' + data.avg_cam_dist_m + 'm';
+                    debugDiv.innerText = `Z_avg=${data.avg_cam_dist_m}m | Pad1=${data.pad1}px | Pad2=${data.pad2}px`;
                 } else if (measureMode === 'REF_1') {
                     let actual = prompt(`Camera calculated ${data.dist_cm} cm.\\n\\nEnter ACTUAL length of reference in cm:`);
                     if (actual && !isNaN(actual) && parseFloat(actual) > 0) {
@@ -351,7 +408,6 @@ HTML_PAGE = """
                     redrawCanvas();
                 } else if (measureMode === 'REF_2') {
                     const fd = (data.dist_cm * scaleFactor).toFixed(1);
-                    const fu = (data.uncertainty_cm * scaleFactor).toFixed(1);
                     const label = `${fd} cm`;
                     measurements.push({ p1, p2, label, warning: !!data.warning });
                     redrawCanvas(); updateList();
