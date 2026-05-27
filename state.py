@@ -2,47 +2,39 @@ import threading
 import numpy as np
 
 # --- CONFIGURATION ---
-UNDERWATER_MODE = True  # True = Flashed EEPROM, False = Factory EEPROM
+UNDERWATER_MODE = True  
 PORT = 1111
 JPEG_QUALITY = 70  
-
-# TUNE THIS: Increased to 6.0 to account for surface water light flicker. 
-# Lower it if the ROV is moving but the buffer isn't clearing.
 MOTION_THRESHOLD = 6.0  
+
+# --- DYNAMIC SETTINGS ---
+BUFFER_SIZE = 30  
+TARGET_FPS = 30
+FPS_CHANGED = False
 
 # --- GLOBAL MEMORY & STATE ---
 system_state = "LIVE"
 active_clients = 0
-latest_jpeg = None
-latest_uncompressed_frame = None  
-frozen_uncompressed_frame = None  
+
+latest_json_payload = "{}" 
+latest_rgb_jpeg_bytes = None
+frozen_rgb_jpeg_bytes = None  
+
 latest_depth_frame = None
 depth_buffer = []  
 fx = fy = cx = cy = 0.0
-state_lock = threading.Lock() # Thread safety lock
+state_lock = threading.Lock()
 
 # --- SPATIAL FILTER ---
 def get_smart_percentile(valid_pixels):
-    """
-    Analyzes spatial depth data to bypass near-field backscatter.
-    Normalizes the noise spread against distance to prevent false
-    turbidity detection at extreme stereo ranges.
-    """
     p10 = np.percentile(valid_pixels, 10)
     p50 = np.percentile(valid_pixels, 50)
-
     noise_gap = p50 - p10
     normalized_gap = (noise_gap / max(p50, 1)) * 1000
 
-    if normalized_gap < 15:
-        target_p = 25       # Clean water / normal hardware variance
-    elif normalized_gap > 100:
-        target_p = 65       # Heavy backscatter: push up to clear the noise wall
-    else:
-        target_p = 25 + ((normalized_gap - 15) / 85) * 40  # Linear interpolation
+    if normalized_gap < 15: target_p = 25
+    elif normalized_gap > 100: target_p = 65
+    else: target_p = 25 + ((normalized_gap - 15) / 85) * 40
 
-    # Sparse ROI guard: don't push too high on unreliable distributions
-    if len(valid_pixels) < 15:
-        target_p = min(target_p, 45)
-
+    if len(valid_pixels) < 15: target_p = min(target_p, 45)
     return np.percentile(valid_pixels, target_p)

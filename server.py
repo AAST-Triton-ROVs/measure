@@ -1,4 +1,3 @@
-import cv2
 import numpy as np
 import math
 import time
@@ -6,7 +5,6 @@ import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from socketserver import ThreadingMixIn
 
-# Connect to our isolated files
 import state
 from gui import HTML_PAGE_BYTES
 
@@ -15,7 +13,7 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
 
 class ROVWebHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
-        pass  # Suppress noisy HTTP logs
+        pass  
         
     def do_GET(self):
         if self.path == '/':
@@ -24,48 +22,30 @@ class ROVWebHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(HTML_PAGE_BYTES)
             
-        elif self.path == '/stream':
-            with state.state_lock:
-                state.active_clients += 1
+        elif self.path == '/state':
             self.send_response(200)
-            self.send_header('Content-type', 'multipart/x-mixed-replace; boundary=frame')
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Cache-Control', 'no-cache')
             self.end_headers()
-            
-            last_sent_jpeg = None
-            try:
-                while True:
-                    frame = state.latest_jpeg
-                    if frame is not None and frame != last_sent_jpeg:
-                        self.wfile.write(b'--frame\r\n')
-                        self.send_header('Content-Type', 'image/jpeg')
-                        self.send_header('Content-Length', len(frame))
-                        self.end_headers()
-                        self.wfile.write(frame)
-                        self.wfile.write(b'\r\n')
-                        last_sent_jpeg = frame
-                    time.sleep(0.05)
-            except:
-                pass
-            finally:
-                with state.state_lock:
-                    state.active_clients -= 1
+            with state.state_lock:
+                payload = state.latest_json_payload
+            self.wfile.write(payload.encode('utf-8'))
                     
         elif self.path == '/snapshot':
-            frame_to_capture = None
+            buffer = None
             with state.state_lock:
-                if state.system_state == "FROZEN" and state.frozen_uncompressed_frame is not None:
-                    frame_to_capture = state.frozen_uncompressed_frame.copy()
-                elif state.system_state == "LIVE" and state.latest_uncompressed_frame is not None:
-                    frame_to_capture = state.latest_uncompressed_frame.copy()
+                if state.system_state == "FROZEN" and state.frozen_rgb_jpeg_bytes is not None:
+                    buffer = state.frozen_rgb_jpeg_bytes
+                else:
+                    buffer = state.latest_rgb_jpeg_bytes
             
-            if frame_to_capture is not None:
-                _, buffer = cv2.imencode('.jpg', frame_to_capture, [cv2.IMWRITE_JPEG_QUALITY, 100])
+            if buffer is not None:
                 self.send_response(200)
                 self.send_header('Content-Type', 'image/jpeg')
                 timestamp = int(time.time())
                 self.send_header('Content-Disposition', f'attachment; filename="triton_capture_{timestamp}.jpg"')
                 self.end_headers()
-                self.wfile.write(buffer.tobytes())
+                self.wfile.write(buffer)
             else:
                 self.send_response(400)
                 self.end_headers()
@@ -76,9 +56,7 @@ class ROVWebHandler(BaseHTTPRequestHandler):
             with state.state_lock:
                 if state.system_state == "LIVE":
                     state.system_state = "FROZEN"
-                    
-                    if state.latest_uncompressed_frame is not None:
-                        state.frozen_uncompressed_frame = state.latest_uncompressed_frame.copy()
+                    state.frozen_rgb_jpeg_bytes = state.latest_rgb_jpeg_bytes
                     
                     buf_len = len(state.depth_buffer)
                     if buf_len > 0:
@@ -93,16 +71,40 @@ class ROVWebHandler(BaseHTTPRequestHandler):
                 else:
                     state.system_state = "LIVE"
                     state.depth_buffer = []
-                    state.frozen_uncompressed_frame = None
+                    state.frozen_rgb_jpeg_bytes = None
             
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
             self.end_headers()
-            # Send the buffer length back so the UI can warn the pilot if it's partial
             self.wfile.write(json.dumps({
                 'state': state.system_state,
-                'buf_len': buf_len
+                'buf_len': buf_len,
+                'max_buf': state.BUFFER_SIZE
             }).encode('utf-8'))
+            
+        elif self.path == '/settings':
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            data = json.loads(post_data.decode('utf-8'))
+            
+            new_size = max(10, min(60, int(data.get('size', state.BUFFER_SIZE))))
+            new_fps = max(10, min(60, int(data.get('fps', state.TARGET_FPS))))
+            
+            needs_reboot = False
+            with state.state_lock:
+                state.BUFFER_SIZE = new_size
+                while len(state.depth_buffer) > state.BUFFER_SIZE:
+                    state.depth_buffer.pop(0)
+                
+                if state.TARGET_FPS != new_fps:
+                    state.TARGET_FPS = new_fps
+                    state.FPS_CHANGED = True
+                    needs_reboot = True
+                    
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({'status': 'success', 'rebooting': needs_reboot}).encode('utf-8'))
             
         elif self.path == '/measure':
             content_length = int(self.headers['Content-Length'])
@@ -157,12 +159,11 @@ class ROVWebHandler(BaseHTTPRequestHandler):
                     
                     response_data = {
                         'status': 'success',
-                        'result': f"{dist_cm:.1f} cm &plusmn; {unc_cm:.1f} cm",
+                        'result': f"{dist_cm:.1f} cm",
                         'dist_cm': dist_cm,
                         'uncertainty_cm': unc_cm,
                         'avg_cam_dist_m': round(avg_z / 1000.0, 2),
                     }
-                    
                     if avg_z > 2500:
                         response_data['warning'] = f"Target ~{avg_z/10:.0f}cm away. Use REF mode to verify accuracy."
                 else:
