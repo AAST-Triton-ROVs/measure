@@ -150,13 +150,9 @@ HTML_PAGE = """
         
         let isFrozen = false;
         let measureMode = 'DIRECT';
-        let scaleFactor = 1.0;
         let pendingP1 = null;
         let measurements = [];
 
-        // ----------------------------------------------------
-        // NEW: LOCALSTORAGE VALUES INITIALIZATION & RECOVERY
-        // ----------------------------------------------------
         function loadSavedSettings() {
             if(localStorage.getItem('triton_buf_size')) {
                 bufSlider.value = localStorage.getItem('triton_buf_size');
@@ -171,16 +167,13 @@ HTML_PAGE = """
                 fpsInput.value = localStorage.getItem('triton_target_fps');
             }
             
-            // Forces the UI text readouts to perfectly mirror slider handles on load
             document.getElementById('buf-val').innerText = bufSlider.value;
             document.getElementById('k-val').innerText = parseFloat(kSlider.value).toFixed(2);
             document.getElementById('sig-val').innerText = parseFloat(sigSlider.value).toFixed(1);
             
-            // Send saved state to backend directly on page startup
             sendSettings();
         }
         
-        // Input text sync listeners
         bufSlider.addEventListener('input', (e) => {
             document.getElementById('buf-val').innerText = e.target.value;
             localStorage.setItem('triton_buf_size', e.target.value);
@@ -220,9 +213,7 @@ HTML_PAGE = """
         sigSlider.addEventListener('change', sendSettings);
         fpsInput.addEventListener('keydown', (e) => { if(e.key === 'Enter') sendSettings(); });
 
-        // Trigger memory recovery as soon as DOM loads
         window.addEventListener('DOMContentLoaded', loadSavedSettings);
-        // ----------------------------------------------------
 
         function fetchState() {
             if (isFrozen) return; 
@@ -302,10 +293,10 @@ HTML_PAGE = """
 
         function toggleMode() {
             if (measureMode === 'DIRECT') {
-                measureMode = 'REF_1'; modeBtn.innerText = 'MODE: SET REFERENCE'; 
+                measureMode = 'REF_1'; modeBtn.innerText = 'MODE: AUTO-TUNE K'; 
                 if (isFrozen) statusDiv.innerText = "System Frozen. Click 2 points on KNOWN reference object.";
             } else {
-                measureMode = 'DIRECT'; scaleFactor = 1.0; modeBtn.innerText = 'MODE: DIRECT 3D'; 
+                measureMode = 'DIRECT'; modeBtn.innerText = 'MODE: DIRECT 3D'; 
                 if (isFrozen) statusDiv.innerText = "System Frozen. Hover to magnify, click 2 points.";
             }
             pendingP1 = null; redrawCanvas();
@@ -331,7 +322,6 @@ HTML_PAGE = """
                     let warnHTML = data.buf_len < data.max_buf ? ` [WARNING: Partial Buffer ${data.buf_len}/${data.max_buf}]` : "";
                     if (measureMode === 'DIRECT') statusDiv.innerText = `System Frozen${warnHTML}. Hover to magnify, click 2 points.`;
                     if (measureMode === 'REF_1') statusDiv.innerText = `System Frozen${warnHTML}. Click 2 points on KNOWN reference.`;
-                    if (measureMode === 'REF_2') statusDiv.innerText = `Scale Active${warnHTML}. Click 2 points on UNKNOWN target.`;
                 } else {
                     freezeBtn.innerText = 'FREEZE (SPACE)'; 
                     statusDiv.innerText = 'Live Stream. Press SPACE to Freeze.';
@@ -359,7 +349,6 @@ HTML_PAGE = """
             if(isFrozen) {
                 if (measureMode === 'DIRECT') statusDiv.innerText = "System Frozen. Hover to magnify, click 2 points.";
                 if (measureMode === 'REF_1') statusDiv.innerText = 'System Frozen. Click 2 points on KNOWN reference.';
-                if (measureMode === 'REF_2') statusDiv.innerText = 'Scale Active. Click 2 points on UNKNOWN target.';
             }
         }
 
@@ -429,6 +418,7 @@ HTML_PAGE = """
                     redrawCanvas(); return;
                 }
                 const warnHTML = data.warning ? `<br><span style="color:#ff0; font-size:13px;">&#9888; ${data.warning}</span>` : '';
+                
                 if (measureMode === 'DIRECT') {
                     const label = `${data.dist_cm.toFixed(1)} cm`;
                     measurements.push({ p1, p2, label, warning: !!data.warning });
@@ -436,24 +426,35 @@ HTML_PAGE = """
                     statusDiv.innerText = `#${measurements.length}: ${label} (Conf: ${data.confidence}) — click for next.`;
                     resultDiv.innerHTML = data.result + warnHTML;
                     debugDiv.innerText = `Z_avg=${data.avg_cam_dist_m}m | Pad1=${data.pad1}px | Pad2=${data.pad2}px`;
+                    
                 } else if (measureMode === 'REF_1') {
-                    let actual = prompt(`Camera calculated ${data.dist_cm} cm.\\n\\nEnter ACTUAL length of reference in cm:`);
+                    let actual = prompt(`Camera calculated ${data.dist_cm} cm.\n\nEnter ACTUAL length of reference in cm:`);
                     if (actual && !isNaN(actual) && parseFloat(actual) > 0) {
-                        scaleFactor = parseFloat(actual) / data.dist_cm; measureMode = 'REF_2';
-                        modeBtn.innerText = 'MODE: MEASURING TARGET';
-                        statusDiv.innerText = `Scale locked (${scaleFactor.toFixed(2)}x). Click to measure target.`;
-                        resultDiv.innerHTML = 'Scale set.';
+                        
+                        let current_k = parseFloat(kSlider.value);
+                        let raw_dist = data.dist_cm / current_k;
+                        let new_k = parseFloat(actual) / raw_dist;
+                        new_k = Math.max(0.5, Math.min(2.0, new_k));
+                        
+                        kSlider.value = new_k.toFixed(2);
+                        document.getElementById('k-val').innerText = kSlider.value;
+                        localStorage.setItem('triton_refraction_k', kSlider.value);
+                        sendSettings();
+                        
+                        measureMode = 'DIRECT';
+                        modeBtn.innerText = 'MODE: DIRECT 3D';
+                        statusDiv.innerText = `Calibration saved! Slider K auto-set to ${new_k.toFixed(2)}. Click to measure.`;
+                        resultDiv.innerHTML = `K = ${new_k.toFixed(2)}`;
+                        
+                        measurements = [];
+                        redrawCanvas();
+                        updateList();
+                        
                     } else {
-                        alert('Invalid input. Canceled.'); statusDiv.innerText = 'Frozen. Click to measure.';
+                        alert('Invalid input. Canceled.'); 
+                        statusDiv.innerText = 'Frozen. Click to measure.';
+                        redrawCanvas();
                     }
-                    redrawCanvas();
-                } else if (measureMode === 'REF_2') {
-                    const fd = (data.dist_cm * scaleFactor).toFixed(1);
-                    const label = `${fd} cm`;
-                    measurements.push({ p1, p2, label, warning: !!data.warning });
-                    redrawCanvas(); updateList();
-                    statusDiv.innerText = `#${measurements.length}: ${label} — click for next.`;
-                    resultDiv.innerHTML = `${fd} cm` + warnHTML;
                 }
             }).catch(err => { statusDiv.innerText = "Network Error."; redrawCanvas(); });
         });

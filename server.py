@@ -32,7 +32,7 @@ class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
 
 class ROVWebHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
-        pass  # Suppress HTTP logs
+        pass  
         
     def do_GET(self):
         try:
@@ -81,7 +81,7 @@ class ROVWebHandler(BaseHTTPRequestHandler):
                 self.send_response(404)
                 self.end_headers()
         except (BrokenPipeError, ConnectionResetError):
-            pass # Catch closed sockets globally across all GET requests
+            pass 
 
     def do_POST(self):
         try:
@@ -261,8 +261,5 @@ class ROVWebHandler(BaseHTTPRequestHandler):
                 self.send_header('Content-type', 'application/json')
                 self.end_headers()
                 self.wfile.write(json.dumps(response_data).encode('utf-8'))
-            else:
-                self.send_response(404)
-                self.end_headers()
         except (BrokenPipeError, ConnectionResetError):
-            pass # Catch closed sockets globally across all POST requests
+            pass
