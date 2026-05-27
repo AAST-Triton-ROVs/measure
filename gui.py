@@ -153,11 +153,50 @@ HTML_PAGE = """
         let scaleFactor = 1.0;
         let pendingP1 = null;
         let measurements = [];
+
+        // ----------------------------------------------------
+        // NEW: LOCALSTORAGE VALUES INITIALIZATION & RECOVERY
+        // ----------------------------------------------------
+        function loadSavedSettings() {
+            if(localStorage.getItem('triton_buf_size')) {
+                bufSlider.value = localStorage.getItem('triton_buf_size');
+            }
+            if(localStorage.getItem('triton_refraction_k')) {
+                kSlider.value = localStorage.getItem('triton_refraction_k');
+            }
+            if(localStorage.getItem('triton_sigma_threshold')) {
+                sigSlider.value = localStorage.getItem('triton_sigma_threshold');
+            }
+            if(localStorage.getItem('triton_target_fps')) {
+                fpsInput.value = localStorage.getItem('triton_target_fps');
+            }
+            
+            // Forces the UI text readouts to perfectly mirror slider handles on load
+            document.getElementById('buf-val').innerText = bufSlider.value;
+            document.getElementById('k-val').innerText = parseFloat(kSlider.value).toFixed(2);
+            document.getElementById('sig-val').innerText = parseFloat(sigSlider.value).toFixed(1);
+            
+            // Send saved state to backend directly on page startup
+            sendSettings();
+        }
         
-        bufSlider.addEventListener('input', (e) => document.getElementById('buf-val').innerText = e.target.value);
-        kSlider.addEventListener('input', (e) => document.getElementById('k-val').innerText = e.target.value);
-        sigSlider.addEventListener('input', (e) => document.getElementById('sig-val').innerText = e.target.value);
-        
+        // Input text sync listeners
+        bufSlider.addEventListener('input', (e) => {
+            document.getElementById('buf-val').innerText = e.target.value;
+            localStorage.setItem('triton_buf_size', e.target.value);
+        });
+        kSlider.addEventListener('input', (e) => {
+            document.getElementById('k-val').innerText = parseFloat(e.target.value).toFixed(2);
+            localStorage.setItem('triton_refraction_k', e.target.value);
+        });
+        sigSlider.addEventListener('input', (e) => {
+            document.getElementById('sig-val').innerText = parseFloat(e.target.value).toFixed(1);
+            localStorage.setItem('triton_sigma_threshold', e.target.value);
+        });
+        fpsInput.addEventListener('input', (e) => {
+            localStorage.setItem('triton_target_fps', e.target.value);
+        });
+
         function sendSettings() {
             fetch('/settings', {
                 method: 'POST',
@@ -180,6 +219,10 @@ HTML_PAGE = """
         kSlider.addEventListener('change', sendSettings);
         sigSlider.addEventListener('change', sendSettings);
         fpsInput.addEventListener('keydown', (e) => { if(e.key === 'Enter') sendSettings(); });
+
+        // Trigger memory recovery as soon as DOM loads
+        window.addEventListener('DOMContentLoaded', loadSavedSettings);
+        // ----------------------------------------------------
 
         function fetchState() {
             if (isFrozen) return; 
@@ -278,7 +321,6 @@ HTML_PAGE = """
                     freezeBtn.innerText = 'RESUME (SPACE)'; 
                     hudZ.style.display = 'block';
                     
-                    // --- NEW: IMAGES LOAD DIRECTLY FROM TOGGLE PAYLOAD ---
                     if (data.rgb) streamRgb.src = "data:image/jpeg;base64," + data.rgb;
                     if (data.disp) streamDisp.src = "data:image/jpeg;base64," + data.disp;
                     
@@ -286,7 +328,6 @@ HTML_PAGE = """
                         window.depthData = new Uint16Array(buffer);
                     });
                     
-                    // --- NEW: BUFFER WARNING NOW WORKS ---
                     let warnHTML = data.buf_len < data.max_buf ? ` [WARNING: Partial Buffer ${data.buf_len}/${data.max_buf}]` : "";
                     if (measureMode === 'DIRECT') statusDiv.innerText = `System Frozen${warnHTML}. Hover to magnify, click 2 points.`;
                     if (measureMode === 'REF_1') statusDiv.innerText = `System Frozen${warnHTML}. Click 2 points on KNOWN reference.`;
