@@ -11,14 +11,15 @@ Developed for the MATE ROV Competition by the Triton ROVs software team at AASTM
 - **Live MJPEG stream** served over Wi-Fi to any browser on the operator station
 - **Freeze & measure** — spacebar freezes the feed; click two points to get a distance
 - **Multi-measurement overlay** — accumulate multiple labeled measurements on the same frozen frame, each color-coded
-- **Magnifier loupe** — hover over the frozen frame to zoom in for precise click placement
+- **Magnifier loupe + live Z readout** — hover over the frozen frame to zoom in and see depth under the cursor
 - **Motion-gated depth buffer** — depth frames are only accumulated when the ROV is stable; buffer clears automatically on motion
 - **Smart percentile filter** — adapts to water turbidity by analyzing the statistical spread of depth values per click region
-- **Temporal trimmed mean** — 60-frame depth stack with outlier rejection baked in at freeze time
-- **Reference scaling mode** — empirical correction when stereo accuracy degrades at long range (>2.5 m)
-- **Distance warning** — pilot is alerted when target distance exceeds reliable stereo bounds
-- **Snapshot export** — save the full-resolution uncompressed frame to disk from the browser
-- **HUD overlays** — live FPS, motion score, and buffer fill status burned into the stream
+- **Variance-masked temporal average** — MAD-based outlier rejection at freeze time with adjustable sigma
+- **Adaptive ROI + confidence label** — click padding scales with range, and each measurement reports LOW/MEDIUM/HIGH confidence
+- **Refraction multiplier (K)** — global scale for dome/flat port optics
+- **Frozen disparity heatmap + laser sync** — aligns click location with disparity when frozen
+- **Snapshot export** — save a full-resolution JPEG from the browser
+- **HUD overlays** — live FPS, motion score, buffer status, and Z readout
 
 ---
 
@@ -28,7 +29,7 @@ The system is split across four files with clean separation of concerns:
 
 ```
 freeze.py   — hardware entry point: camera pipeline, capture loop, motion detection, HUD
-server.py   — HTTP server: stream, snapshot, toggle, measure endpoints
+server.py   — HTTP server: state, snapshot, toggle, measure, settings, raw_depth endpoints
 gui.py      — HTML/CSS/JS frontend served as a string constant
 state.py    — shared globals, configuration, and the smart percentile filter
 ```
@@ -74,9 +75,12 @@ On boot, the terminal will print the server address:
 
 ```
 --- TRITON ROV BOOT SEQUENCE ---
- UNDERWATER MODE: Fetching Flashed Custom Calibration from EEPROM...
- SYSTEM ONLINE (HEADLESS MODE)
- Connect any laptop browser to: http://<ROV_IP>:1111
+HUD SERVER ONLINE
+Connect laptop browser to: http://<ROV_IP>:1111
+
+Waiting for OAK-D camera to be connected...
+Camera detected! Booting hardware...
+DEPTH PIPELINE ACTIVE (FPS: 30)
 ```
 
 Open `http://<ROV_IP>:1111` in the operator browser. No installation required on the station side.
@@ -87,13 +91,15 @@ Open `http://<ROV_IP>:1111` in the operator browser. No installation required on
 
 ### Direct Measurement (DIRECT 3D mode)
 
-1. Watch the HUD overlay in the top-left corner. Wait for **LOCKED: 60/60 (READY)** before freezing.
+1. Watch the HUD overlay in the top-left corner. Wait for **LOCKED: N/N (READY)** before freezing (N is the current buffer size).
 2. Press **Spacebar** (or the FREEZE button) to freeze the frame.
 3. Click **Point 1** on the target. A crosshair marker appears.
 4. Click **Point 2**. The system queries the depth buffer, computes 3D coordinates, and draws a labeled line between the two points.
 5. Repeat clicks for additional measurements on the same frame. Each pair gets a distinct color.
 6. Press **CLEAR ALL** to reset measurements without resuming the stream.
 7. Press **Spacebar** again to resume the live feed.
+
+When frozen, the disparity pane switches to an averaged heatmap and the laser sync overlay mirrors your cursor position.
 
 ### Reference Scaling Mode (for targets > 2.5 m)
 
@@ -120,7 +126,13 @@ All tuneable parameters are in `state.py`:
 | `UNDERWATER_MODE` | `True` | `True` = load flashed EEPROM calibration; `False` = factory calibration |
 | `PORT` | `1111` | HTTP server port |
 | `JPEG_QUALITY` | `70` | Stream compression (lower = faster, higher = sharper) |
-| `MOTION_THRESHOLD` | `3.5` | Motion sensitivity for depth buffer gating. Increase (6–8) if pool lighting flicker causes false clears. |
+| `BUFFER_SIZE` | `30` | Depth buffer length in frames (10–60 in UI) |
+| `TARGET_FPS` | `30` | Camera FPS; changes from UI trigger a pipeline reboot |
+| `REFRACTION_K` | `1.0` | Global distance scale for port refraction |
+| `SIGMA_THRESHOLD` | `2.0` | Variance strictness for temporal averaging (MAD-based) |
+| `MOTION_THRESHOLD` | `6.0` | Motion sensitivity for depth buffer gating. Increase (6–8) if pool lighting flicker causes false clears. |
+
+Buffer size, refraction K, sigma strictness, and target FPS are adjustable from the HUD while live; FPS changes trigger a pipeline reboot.
 
 ---
 
@@ -128,18 +140,19 @@ All tuneable parameters are in `state.py`:
 
 ### Capture & Buffering
 
-The Pi continuously captures stereo depth frames from the OAK-D S2. Each frame is motion-checked against the previous one using a downscaled (160×90) grayscale diff. If motion exceeds `MOTION_THRESHOLD`, the depth buffer is cleared. When stable, frames accumulate up to a 60-frame rolling window (~2 seconds at 30 fps).
+The Pi continuously captures stereo depth frames from the OAK-D S2. Each frame is motion-checked against the previous one using a downscaled (160×90) grayscale diff. If motion exceeds `MOTION_THRESHOLD`, the depth buffer is cleared. When stable, frames accumulate up to `BUFFER_SIZE` (default 30, adjustable 10–60 from the UI).
 
 ### Freeze & Temporal Filter
 
-When the pilot freezes, the 60-frame stack is processed pixel-by-pixel:
-- Bottom 10% of values per pixel (backscatter / flying pixels) are rejected
-- Top 20% of values per pixel (noise spikes) are rejected
-- Remaining values are averaged into a single high-quality depth map
+When the pilot freezes, the stack is processed pixel-by-pixel with a variance mask:
+- Compute the per-pixel median
+- Estimate per-pixel noise using MAD (Median Absolute Deviation)
+- Reject values where `abs(value - median) > SIGMA_THRESHOLD × 1.4826 × MAD`
+- Average the remaining values into a single high-quality depth map
 
 ### Per-Click Spatial Filter (`get_smart_percentile`)
 
-For each clicked point, a 30×30 px ROI is sampled from the depth map. Valid (non-zero) pixels are analyzed:
+For each clicked point, the ROI size adapts based on rough range (clamped to 5–30 px). Valid (non-zero) pixels are analyzed:
 
 ```
 normalized_gap = ((p50 - p10) / p50) × 1000
@@ -154,7 +167,7 @@ This normalizes depth spread relative to distance, preventing long-range stereo 
 | Between | Linear interpolation |
 | ROI has < 15 valid pixels | Capped at 45th |
 
-Near-field backscatter particles return low depth values (appear closer than the object). Pushing the percentile upward bypasses these and lands on the solid object surface behind them.
+Near-field backscatter particles return low depth values (appear closer than the object). Pushing the percentile upward bypasses these and lands on the solid object surface behind them. Each measurement also reports a confidence label based on the fraction of valid pixels: HIGH (>= 0.6), MEDIUM (>= 0.3), or LOW.
 
 ### 3D Reconstruction
 
@@ -163,10 +176,11 @@ Standard pinhole unprojection with a flat-port edge correction in DIRECT mode:
 ```
 x_3d = ((px - cx) × z / fx) × (1 - α × edge_ratio²)
 y_3d =  (py - cy) × z / fy
-dist = √(Δx² + Δy² + Δz²)
+dist_raw = √(Δx² + Δy² + Δz²)
+dist = dist_raw × K
 ```
 
-The edge correction (`α = 0.10`) compensates for apparent barrel distortion introduced by the flat acrylic port at wide angles. It is bypassed in Reference Scaling mode, where empirical correction replaces the analytical model.
+The edge correction (`α = 0.10`) compensates for apparent barrel distortion introduced by the flat acrylic port at wide angles. It is bypassed in Reference Scaling mode, where empirical correction replaces the analytical model. `K` is a global refraction scale applied after the raw 3D distance is computed.
 
 ---
 
@@ -198,9 +212,9 @@ Accuracy degrades at long range due to the OAK-D S2's 7.5 cm stereo baseline. Un
 | File | Responsibility |
 |------|---------------|
 | `freeze.py` | Entry point. DepthAI pipeline, capture loop, motion detection, HUD rendering, HTTP server thread launch |
-| `server.py` | `ThreadedHTTPServer`. Handles `/`, `/stream`, `/snapshot`, `/toggle`, `/measure` |
+| `server.py` | `ThreadedHTTPServer`. Handles `/`, `/state`, `/snapshot`, `/toggle`, `/measure`, `/settings`, `/raw_depth` |
 | `gui.py` | Complete frontend as `HTML_PAGE` / `HTML_PAGE_BYTES`. Pure client-side JS — no server load for drawing |
-| `state.py` | Shared globals, `state_lock`, configuration constants, `get_smart_percentile()` |
+| `state.py` | Shared globals, `state_lock`, configuration constants, temporal variance mask, adaptive ROI, confidence labeling |
 
 ---
 
